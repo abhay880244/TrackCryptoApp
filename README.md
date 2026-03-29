@@ -5,7 +5,10 @@ Tracking the crypto market - all in one
 ### Features
 - Real-time cryptocurrency price tracking via Binance WebSocket
 - Live price updates for BTC, ETH, BNB, SOL, ADA
-- Interactive price history graphs with last 50 data points
+- **Local caching** with Room database (last 50 prices per ticker)
+- **Offline support** - view cached prices without internet connection
+- **Network-aware** - automatically syncs when connection restored
+- Interactive price history graphs
 - Toggle between real-time and throttled (500ms) updates
 - Session statistics (high/low prices)
 - Material Design 3 UI with dark/light theme support
@@ -16,6 +19,7 @@ Tracking the crypto market - all in one
 - **Architecture:** MVVM with Clean Architecture
 - **Dependency Injection:** Hilt
 - **Networking:** OkHttp WebSocket
+- **Local Storage:** Room Database
 - **Navigation:** Navigation Compose
 - **Build:** Gradle with Kotlin DSL
 
@@ -30,13 +34,16 @@ app/src/main/java/android/project/trackcryptoapp/
 │   └── repository/
 │       └── StockRepository.kt  # Repository interface
 ├── data/
-│   └── repository/
-│       └── BinanceStockRepositoryImpl.kt  # Repository impl
+│   ├── repository/
+│   │   └── BinanceStockRepositoryImpl.kt  # Repository impl with DB cache
+│   └── local/
+│       ├── StockDatabase.kt    # Room database
+│       └── StockDao.kt         # Data access object
 ├── network/
 │   ├── BinanceWebSocketListener.kt  # WebSocket handler
-│   └── TiingoWebSocketListener.kt   # Alternative data source
+│   └── NetworkMonitor.kt      # Network connectivity monitor
 ├── model/
-│   └── StockPrice.kt          # Data model
+│   └── StockPrice.kt          # Data model (Room entity)
 ├── viewmodel/
 │   └── StockViewModel.kt      # UI state management
 └── ui/
@@ -47,7 +54,7 @@ app/src/main/java/android/project/trackcryptoapp/
 ### Building & Running
 
 **Prerequisites:**
-- Android Studio Hedgehog (2023.1.1) or newer
+- Android Studio Iguana (2023.3.1) or newer
 - Android SDK with API level 35
 - JDK 11 or newer
 
@@ -60,30 +67,51 @@ app/src/main/java/android/project/trackcryptoapp/
 
 **Run from Android Studio:**
 1. Open the project in Android Studio
-2. Select a device (emulator or physical)
-3. Click Run (Shift+F10) or use the Run button
+2. Let Gradle sync and download dependencies
+3. Select a device (emulator or physical)
+4. Click Run (Shift+F10) or use the Run button
 
 ### Testing
 ```bash
 ./gradlew test                       # Run unit tests
 ./gradlew connectedAndroidTest       # Run instrumentation tests
 ./gradlew lint                       # Run lint checks
+./gradlew lintFix                    # Auto-fix lint issues
 ```
 
 ### API Integration
-The app connects to Binance's public WebSocket stream:
-- **Endpoint:** `wss://stream.binance.com:9443/ws`
-- **Subscription format:** `{symbol.lowercase()}@aggTrade`
-- **Message fields:** `s` (symbol), `p` (price), `T` (timestamp)
 
-No API key required for public trade data.
+The app connects to Binance's public WebSocket stream for real-time trade data:
+- **Endpoint:** `wss://stream.binance.com:9443/ws`
+- **Subscription:** One stream per symbol (e.g., `btcusdt@aggTrade`)
+- **Message format:** `aggTrade` events with `s` (symbol), `p` (price), `T` (timestamp)
+- **No authentication required** for public trade data
+
+All messages are cached in Room for offline viewing and graph rendering.
 
 ### Key Architecture Patterns
-- **Flow-based data:** Repository emits `Flow<StockPrice>`; ViewModel transforms with operators (shareIn, sample)
-- **State management:** Immutable `StockUiState` exposed via `StateFlow`
-- **Lifecycle-aware:** `collectAsStateWithLifecycle()` for Compose UI
-- **WebSocket lifecycle:** Tied to ViewModel; disconnected in `onCleared()`
-- **History tracking:** Maintains last 50 price points per ticker
+
+**Data Flow:**
+- **Single Source of Truth:** Room database caches all price data
+- **Repository pattern:** `BinanceStockRepositoryImpl` coordinates WebSocket sync and DB operations
+- **Flow-based:** Repository exposes `Flow<StockPrice>`; ViewModel transforms with `sample()`, `combine()`
+- **Optimistic DB writes:** WebSocket messages → Room DB → UI updates
+
+**State Management:**
+- Immutable `StockUiState` exposed via `StateFlow`
+- `collectAsStateWithLifecycle()` for Compose UI
+- Network monitoring with `NetworkMonitor` - auto-reconnects when online
+
+**Performance Optimizations:**
+- Throttling mode: 500ms sampling via `Flow.sample()`
+- DB cleanup: Background deletion of old prices (keeps last 50 per ticker)
+- `distinctUntilChanged()` prevents unnecessary UI recompositions
+
+**Offline Support:**
+- Room persists historical prices
+- `NetworkMonitor` tracks connectivity state
+- Repository reads from DB even when offline
+- Auto-reconnect when network restored
 
 ### Configuration
 - **Default symbols:** BTCUSDT, ETHUSDT, BNBUSDT, SOLUSDT, ADAUSDT
@@ -91,11 +119,18 @@ No API key required for public trade data.
 - **Target SDK:** 35 (Android 15)
 - **Compose BOM:** 2024.12.01
 - **Kotlin:** 2.0.21
+- **Room:** 2.6.1
+- **OkHttp:** 4.12.0
+- **Hilt:** 2.54
+- **Lifecycle Runtime:** 2.8.7
+- **Navigation Compose:** 2.8.5
+- **Activity Compose:** 1.9.3
 
 ### Notes
-- The app uses a throttling mode to sample updates every 500ms (toggle via settings icon)
-- Price graph displays normalized data using Canvas drawing
-- All dependencies managed via version catalog (`gradle/libs.versions.toml`)
+- **Throttling mode:** Toggle to sample updates every 500ms (reduces UI updates while preserving data integrity)
+- **Price graph:** Custom Canvas-based line chart with last 50 data points per ticker
+- **Network-aware:** Automatically fetches live data when online, shows cached data when offline
+- **All dependencies** managed via version catalog (`gradle/libs.versions.toml`)
 
 ### License
 [Add license information here]

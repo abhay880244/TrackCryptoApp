@@ -7,7 +7,7 @@ import org.json.JSONObject
 class BinanceWebSocketListener(
     private val symbols: List<String>,
     private val onMessageReceived: (String) -> Unit,
-    private val onError: (String) -> Unit
+    private val onError: (Throwable) -> Unit
 ) : WebSocketListener() {
 
     override fun onOpen(webSocket: WebSocket, response: Response) {
@@ -24,7 +24,7 @@ class BinanceWebSocketListener(
     }
 
     override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-        onError(t.message ?: "Unknown error")
+        onError(t)
     }
 
     override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {

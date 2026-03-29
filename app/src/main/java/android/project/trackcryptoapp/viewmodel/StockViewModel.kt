@@ -2,11 +2,13 @@ package android.project.trackcryptoapp.viewmodel
 
 import android.project.trackcryptoapp.domain.repository.StockRepository
 import android.project.trackcryptoapp.model.StockPrice
+import android.project.trackcryptoapp.network.NetworkMonitor
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -20,7 +22,8 @@ data class StockUiState(
 
 @HiltViewModel
 class StockViewModel @Inject constructor(
-    private val repository: StockRepository
+    private val repository: StockRepository,
+    private val networkMonitor: NetworkMonitor
 ) : ViewModel() {
     
     private val _uiState = MutableStateFlow(StockUiState())
@@ -32,42 +35,46 @@ class StockViewModel @Inject constructor(
 
     @OptIn(ExperimentalCoroutinesApi::class, FlowPreview::class)
     fun observeStocks(symbols: List<String>) {
-        // Create a shared flow that stays active even when switching between throttled/unthrottled modes.
-        // WhileSubscribed(5000) keeps the connection alive for 5 seconds after the last subscriber leaves,
-        // which prevents reconnection during the brief toggle switch.
-        val sharedPriceFlow = repository.getStockPriceStream(symbols)
-            .shareIn(
-                scope = viewModelScope,
-                started = SharingStarted.WhileSubscribed(5000),
-                replay = 0
-            )
-
+        // Start synchronization when online
         viewModelScope.launch {
-            _uiState.update { it.copy(isLoading = true) }
-            
+            networkMonitor.isOnline
+                .flatMapLatest { isOnline ->
+                    if (isOnline) {
+                        repository.startRealtimeSync(symbols)
+                            .retry(3) { e ->
+                                (e is Exception).also { if (it) delay(2000) }
+                            }
+                    } else {
+                        flow { 
+                            _uiState.update { it.copy(error = "No internet connection") }
+                        }
+                    }
+                }
+                .catch { e ->
+                    _uiState.update { it.copy(error = e.message) }
+                }
+                .collect()
+        }
+
+        // Observe data from Single Source of Truth (Database)
+        viewModelScope.launch {
             _uiState
                 .map { it.isThrottlingEnabled }
                 .distinctUntilChanged()
                 .flatMapLatest { enabled ->
+                    val dataFlow = repository.getStockPrices(symbols)
                     if (enabled) {
-                        sharedPriceFlow.sample(500)
+                        dataFlow.sample(500)
                     } else {
-                        sharedPriceFlow
+                        dataFlow
                     }
                 }
-                .catch { e ->
-                    _uiState.update { it.copy(error = e.message, isLoading = false) }
-                }
-                .collect { stockPrice ->
-                    _uiState.update { state ->
-                        val currentHistory = state.stockPrices[stockPrice.ticker] ?: emptyList()
-                        val newHistory = (currentHistory + stockPrice).takeLast(50)
-                        state.copy(
-                            stockPrices = state.stockPrices + (stockPrice.ticker to newHistory),
-                            isLoading = false,
-                            error = null
-                        )
-                    }
+                .collect { pricesMap ->
+                    _uiState.update { it.copy(
+                        stockPrices = pricesMap,
+                        isLoading = false,
+                        error = if (it.error == "No internet connection") it.error else null
+                    ) }
                 }
         }
     }
