@@ -3,6 +3,7 @@ package android.project.trackcryptoapp.viewmodel
 import android.project.trackcryptoapp.domain.repository.StockRepository
 import android.project.trackcryptoapp.model.StockPrice
 import android.project.trackcryptoapp.network.NetworkMonitor
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -23,14 +24,23 @@ data class StockUiState(
 @HiltViewModel
 class StockViewModel @Inject constructor(
     private val repository: StockRepository,
-    private val networkMonitor: NetworkMonitor
+    private val networkMonitor: NetworkMonitor,
+    private val savedStateHandle: SavedStateHandle
 ) : ViewModel() {
+
+    companion object {
+        private const val KEY_THROTTLING = "is_throttling_enabled"
+    }
     
-    private val _uiState = MutableStateFlow(StockUiState())
+    private val _uiState = MutableStateFlow(StockUiState(
+        isThrottlingEnabled = savedStateHandle.get<Boolean>(KEY_THROTTLING) ?: false
+    ))
     val uiState: StateFlow<StockUiState> = _uiState.asStateFlow()
 
     fun toggleThrottling() {
-        _uiState.update { it.copy(isThrottlingEnabled = !it.isThrottlingEnabled) }
+        val newValue = !_uiState.value.isThrottlingEnabled
+        savedStateHandle[KEY_THROTTLING] = newValue
+        _uiState.update { it.copy(isThrottlingEnabled = newValue) }
     }
 
     @OptIn(ExperimentalCoroutinesApi::class, FlowPreview::class)

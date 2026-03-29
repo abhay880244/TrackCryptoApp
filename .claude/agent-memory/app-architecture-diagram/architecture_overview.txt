@@ -1,0 +1,356 @@
+# TrackCryptoApp - Architecture Diagram (Text View)
+
+## High-Level Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                             TrackCryptoApp                                 │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │                    PRESENTATION LAYER                              │   │
+│  │                                                                     │   │
+│  │  ┌─────────────────────────────────────────────────────────────┐   │   │
+│  │  │                     MainActivity                            │   │   │
+│  │  │  @AndroidEntryPoint                                         │   │   │
+│  │  │  - NavHost: stock_list ↔ stock_details/{ticker}            │   │   │
+│  │  │  - LaunchedEffect { observeStocks(symbols) }               │   │   │
+│  │  │  - TopAppBar with Throttle Toggle                          │   │   │
+│  │  │  - Collects uiState: StateFlow<StockUiState>               │   │   │
+│  │  └─────────────────────────────────────────────────────────────┘   │   │
+│  │                              │                                        │   │
+│  │                              ▼                                        │   │
+│  │  ┌─────────────────────────────────────────────────────────────┐   │   │
+│  │  │                      StockViewModel                        │   │   │
+│  │  │  @HiltViewModel                                            │   │   │
+│  │  │  - uiState: MutableStateFlow<StockUiState>                 │   │   │
+│  │  │  - observeStocks()                                         │   │   │
+│  │  │    ├─ repository.getStockPriceStream(symbols)             │   │   │
+│  │  │    ├─ shareIn(WhileSubscribed(5000))                     │   │   │
+│  │  │    ├─ flatMapLatest { if (throttled) sample(500) else it }│   │   │
+│  │  │    └─ collect { update state, keep last 50 prices }      │   │   │
+│  │  │  - toggleThrottling(): flips isThrottlingEnabled flag     │   │   │
+│  │  │  - onCleared(): repository.disconnect()                   │   │   │
+│  │  └─────────────────────────────────────────────────────────────┘   │   │
+│  │                              │                                        │   │
+│  │                              ▼                                        │   │
+│  │  ┌─────────────────────────────────────────────────────────────┐   │   │
+│  │  │  StockUiState (immutable)                                   │   │   │
+│  │  │  ┌──────────────────────────────────────────────────────┐   │   │   │
+│  │  │  │ stockPrices: Map<ticker, List<StockPrice>>         │   │   │   │
+│  │  │  │ isLoading: Boolean                                 │   │   │   │
+│  │  │  │ error: String?                                     │   │   │   │
+│  │  │  │ isThrottlingEnabled: Boolean                       │   │   │   │
+│  │  │  └──────────────────────────────────────────────────────┘   │   │   │
+│  │  └─────────────────────────────────────────────────────────────┘   │   │
+│  │                              │                                        │   │
+│  │                              ▼                                        │   │
+│  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐             │   │
+│  │  │  StockList   │  │StockDetails  │  │   PriceGraph │             │   │
+│  │  │  Composable  │  │Screen        │  │  Composable  │             │   │
+│  │  │              │  │              │  │ (Canvas)     │             │   │
+│  │  │ - LazyColumn │  │ - Current    │  │              │             │   │
+│  │  │ - StockListItem│ │   price      │  │ - lineTo()   │             │   │
+│  │  │   per ticker │  │ - Statistics │  │ - Path draw  │             │   │
+│  │  │ - onClick →  │  │ - Graph      │  │ - normalize  │             │   │
+│  │  │   navigate   │  │              │  │   to canvas  │             │   │
+│  │  └──────────────┘  └──────────────┘  └──────────────┘             │   │
+│  │                                                                     │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                                                                             │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │                     DEPENDENCY INJECTION                          │   │
+│  │  ┌─────────────────────────────────────────────────────────────┐   │   │
+│  │  │                      AppModule                              │   │   │
+│  │  │  @Module @InstallIn(SingletonComponent)                    │   │   │
+│  │  │                                                             │   │   │
+│  │  │  @Provides @Singleton                                       │   │   │
+│  │  │  fun provideOkHttpClient(): OkHttpClient {                 │   │   │
+│  │  │      return OkHttpClient.Builder().build()                │   │   │
+│  │  │  }                                                          │   │   │
+│  │  │                                                             │   │   │
+│  │  │  @Provides @Singleton                                       │   │   │
+│  │  │  fun provideStockRepository(client: OkHttpClient)          │   │   │
+│  │  │      : StockRepository {                                   │   │   │
+│  │  │      return BinanceStockRepositoryImpl(client)             │   │   │
+│  │  │  }                                                          │   │   │
+│  │  └─────────────────────────────────────────────────────────────┘   │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                                                                             │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │                        DOMAIN LAYER                               │   │
+│  │  ┌─────────────────────────────────────────────────────────────┐   │   │
+│  │  │                 StockRepository (interface)                │   │   │
+│  │  │  fun getStockPriceStream(symbols: List<String>)            │   │   │
+│  │  │      : Flow<StockPrice>                                    │   │   │
+│  │  │  fun disconnect()                                          │   │   │
+│  │  └─────────────────────────────────────────────────────────────┘   │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                                                                             │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │                         DATA LAYER                                │   │
+│  │                                                                     │   │
+│  │  ┌─────────────────────────────────────────────────────────────┐   │   │
+│  │  │        BinanceStockRepositoryImpl                           │   │   │
+│  │  │  implements StockRepository                                 │   │   │
+│  │  │                                                             │   │   │
+│  │  │  - private var webSocket: WebSocket?                        │   │   │
+│  │  │                                                             │   │   │
+│  │  │  override fun getStockPriceStream(symbols: List<String>)   │   │   │
+│  │  │      : Flow<StockPrice> = callbackFlow {                   │   │   │
+│  │  │    ┌────────────────────────────────────────────┐          │   │   │
+│  │  │    │ 1. Build Request: wss://stream.binance... │          │   │   │
+│  │  │    │ 2. Create BinanceWebSocketListener         │          │   │   │
+│  │  │    │    - onMessageReceived: (String) -> Unit   │          │   │   │
+│  │  │    │    - onError: (String) -> Unit             │          │   │   │
+│  │  │    │ 3. client.newWebSocket(request, listener)  │          │   │   │
+│  │  │    │ 4. awaitClose { disconnect() }             │          │   │   │
+│  │  │    └────────────────────────────────────────────┘          │   │   │
+│  │  │                                                             │   │   │
+│  │  │  private fun parseMessage(text: String): StockPrice? {     │   │   │
+│  │  │      val json = JSONObject(text)                           │   │   │
+│  │  │      if (json.getString("e") == "aggTrade") {              │   │   │
+│  │  │        StockPrice(                                          │   │   │
+│  │  │          ticker = json.getString("s"),                     │   │   │
+│  │  │          price = json.getDouble("p"),                      │   │   │
+│  │  │          timestamp = format(json.getLong("T"))             │   │   │
+│  │  │        )                                                    │   │   │
+│  │  │      }                                                      │   │   │
+│  │  │    }                                                        │   │   │
+│  │  │                                                             │   │   │
+│  │  │  override fun disconnect() {                              │   │   │
+│  │  │      webSocket?.close(1000, "Disconnected...")            │   │   │
+│  │  │      webSocket = null                                      │   │   │
+│  │  │  }                                                          │   │   │
+│  │  └─────────────────────────────────────────────────────────────┘   │   │
+│  │                              │                                        │   │
+│  │                              ▼                                        │   │
+│  │  ┌─────────────────────────────────────────────────────────────┐   │   │
+│  │  │             BinanceWebSocketListener                       │   │   │
+│  │  │  extends WebSocketListener                                 │   │   │
+│  │  │                                                             │   │   │
+│  │  │  override fun onOpen(ws: WebSocket, response: Response) { │   │   │
+│  │  │    val subscribe = JSONObject().apply {                   │   │   │
+│  │  │      put("method", "SUBSCRIBE")                            │   │   │
+│  │  │      put("params", symbols.map { "${it.lowercase()}@aggTrade" })││   │
+│  │  │      put("id", 1)                                          │   │   │
+│  │  │    }                                                        │   │   │
+│  │  │    ws.send(subscribe.toString())                           │   │   │
+│  │  │  }                                                          │   │   │
+│  │  │                                                             │   │   │
+│  │  │  override fun onMessage(ws: WebSocket, text: String) {    │   │   │
+│  │  │    onMessageReceived(text)                                 │   │   │
+│  │  │  }                                                          │   │   │
+│  │  │                                                             │   │   │
+│  │  │  override fun onFailure(ws, t, response) {                │   │   │
+│  │  │    onError(t.message ?: "Unknown error")                  │   │   │
+│  │  │  }                                                          │   │   │
+│  │  └─────────────────────────────────────────────────────────────┘   │   │
+│  │                                                                     │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+
+## Data Flow Sequence
+
+┌──────────────────────────────────────────────────────────────────────────┐
+│                          DATA FLOW TIMELINE                              │
+├──────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│  1. INITIALIZATION                                                      │
+│     ┌──────────────┐                                                   │
+│     │ MainActivity │ onCreate()                                        │
+│     └──────┬───────┘                                                   │
+│            │                                                            │
+│            ▼                                                            │
+│     ┌─────────────────┐                                                │
+│     │ LaunchedEffect  │                                                │
+│     │ observeStocks() │──────────────────┐                              │
+│     └─────────────────┘                  │                              │
+│                                          ▼                              │
+│     ┌─────────────────────────────────────────────────────┐            │
+│     │ StockViewModel.observeStocks()                      │            │
+│     │  • repository.getStockPriceStream(symbols)          │            │
+│     │    └─> callbackFlow in BinanceStockRepositoryImpl  │            │
+│     │  • shareIn(WhileSubscribed(5000))                  │            │
+│     │  • flatMapLatest { if (throttled) sample(500) }    │            │
+│     │  • collect { update uiState }                      │            │
+│     └─────────────────────────────────────────────────────┘            │
+│                                          │                              │
+│  2. WEBSOCKET CONNECTION                                             │
+│                                          ▼                              │
+│     ┌─────────────────────────────────────────────────────┐            │
+│     │ BinanceStockRepositoryImpl.getStockPriceStream()   │            │
+│     │  • Creates WebSocket                               │            │
+│     │    Request("wss://stream.binance.com:9443/ws")    │            │
+│     │    with BinanceWebSocketListener                  │            │
+│     └──────────────────────────┬────────────────────────┘            │
+│                                  │                                    │
+│                                  ▼                                    │
+│     ┌──────────────────────────────────────────────┐                 │
+│     │ BinanceWebSocketListener.onOpen()           │                 │
+│     │ • Send SUBSCRIBE message                    │                 │
+│     │   {"method":"SUBSCRIBE","params":           │                 │
+│     │    ["btcusdt@aggTrade","ethusdt@aggTrade", │                 │
+│     │     "bnbusdt@aggTrade","solusdt@aggTrade", │                 │
+│     │     "adausdt@aggTrade"],"id":1}            │                 │
+│     └──────────────────────────────────────────────┘                 │
+│                                                                          │
+│  3. INCOMING MESSAGE (Per Trade Event)                                │
+│                                          │                              │
+│     ┌─────────────────────────────────────────────────────┐            │
+│     │  Binance WebSocket sends aggTrade event:          │            │
+│     │  { "e":"aggTrade", "s":"BTCUSDT",                │            │
+│     │    "p":"67245.12", "T":1710987654321 }           │            │
+│     └───────────────────────────────────────────┬─────┘            │
+│                                                  │                   │
+│     ┌───────────────────────────────────────────▼─────┐            │
+│     │ BinanceWebSocketListener.onMessage(text)       │            │
+│     │ → onMessageReceived(text) callback             │            │
+│     └───────────────────────────────────────────┬─────┘            │
+│                                                  │                   │
+│     ┌───────────────────────────────────────────▼─────┐            │
+│     │ BinanceStockRepositoryImpl.parseMessage(text)  │            │
+│     │ • JSON extraction                               │            │
+│     │ • Create StockPrice(                            │            │
+│     │     ticker="BTCUSDT",                           │            │
+│     │     price=67245.12,                             │            │
+│     │     timestamp="HH:mm:ss" )                      │            │
+│     └───────────────────────────────────────────┬─────┘            │
+│                                                  │                   │
+│     ┌───────────────────────────────────────────▼─────┐            │
+│     │ callbackFlow.trySend(StockPrice)               │            │
+│     │ → Flow emits StockPrice object                 │            │
+│     └───────────────────────────────────────────┬─────┘            │
+│                                                  │                   │
+│  4. FLOW PROCESSING IN VIEWMODEL                                      │
+│                                                  │                   │
+│     ┌───────────────────────────────────────────▼─────┐            │
+│     │ StockViewModel.collect from repository flow    │            │
+│     │                                                  │            │
+│     │  flatMapLatest on isThrottlingEnabled:         │            │
+│     │    • true  → sharedFlow.sample(500)           │            │
+│     │    • false → sharedFlow directly              │            │
+│     │                                                  │            │
+│     │  For each StockPrice received:                 │            │
+│     │    • Get current history for ticker            │            │
+│     │    • Append new price: history + price         │            │
+│     │    • Limit to last 50: takeLast(50)           │            │
+│     │    • Update uiState.stockPrices map            │            │
+│     │    • isLoading = false, error = null           │            │
+│     └───────────────────────────────────────────┬─────┘            │
+│                                                  │                   │
+│  5. UI RENDERING                                                      │
+│                                                  │                   │
+│     ┌───────────────────────────────────────────▼─────┐            │
+│     │ MainActivity.collectAsStateWithLifecycle(uiState)│           │
+│     │  • Re-composes when uiState changes              │           │
+│     └───────────────────────────────────────────┬─────┘            │
+│                                                  │                   │
+│     ┌───────────────────────────────────────────▼─────┐            │
+│     │ StockList Component                            │            │
+│     │  • For each (ticker, history) in stockPrices:  │            │
+│     │    - Get last price: history.last()            │            │
+│     │    - Render StockListItem(ticker, price)       │            │
+│     └───────────────────────────────────────────┬─────┘            │
+│                                                  │                   │
+│     │     On item click                            │                   │
+│     │     navController.navigate("stock_details/$ticker")            │
+│     │                                                  │            │
+│     └───────────────────────────────────────────┬─────┘            │
+│                                                  │                   │
+│     ┌───────────────────────────────────────────▼─────┐            │
+│     │ StockDetailsScreen(ticker)                       │            │
+│     │  • Get history = uiState.stockPrices[ticker]    │            │
+│     │  • currentPrice = history.lastOrNull()          │            │
+│     │  • Show: Price, Throttle status, Statistics     │            │
+│     │  • Render PriceGraph(prices = history)          │            │
+│     └───────────────────────────────────────────┬─────┘            │
+│                                                  │                   │
+│     ┌───────────────────────────────────────────▼─────┐            │
+│     │ PriceGraph (Canvas)                             │            │
+│     │  • Calculate minPrice, maxPrice, priceRange     │            │
+│     │  • Build Path: for each price point            │            │
+│     │    x = index * (width / (count-1))             │            │
+│     │    y = height - ((price - min) / range * height)│           │
+│     │  • drawPath(path, strokeWidth=2dp)             │            │
+│     └───────────────────────────────────────────────────┘            │
+│                                                                          │
+└──────────────────────────────────────────────────────────────────────────┘
+
+
+## Component Architecture Map
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         COMPONENT STRUCTURE                                │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  TrackCryptoApplication (@HiltAndroidApp)                                 │
+│    │                                                                        │
+│    ├─ Dependencies (Hilt)                                                  │
+│    │   ├─ OkHttpClient (singleton)                                        │
+│    │   └─ StockRepository ↝ BinanceStockRepositoryImpl (singleton)        │
+│    │                                                                        │
+│    └─ Activity: MainActivity (@AndroidEntryPoint)                         │
+│        │                                                                    │
+│        ├─ ViewModel: StockViewModel (@HiltViewModel)                      │
+│        │   ├─ Repository: StockRepository                                 │
+│        │   ├─ State: StockUiState                                         │
+│        │   └─ Lifecycle: onCleared() → repository.disconnect()           │
+│        │                                                                    │
+│        └─ Composable UI                                                    │
+│            ├─ Navigation (NavHost)                                        │
+│            │   ├─ Route: stock_list                                       │
+│            │   │   └─ Scaffold → StockList                               │
+│            │   └─ Route: stock_details/{ticker}                            │
+│            │       └─ StockDetailsScreen                                 │
+│            │                                                               │
+│            ├─ StockList (LazyColumn)                                      │
+│            │   └─ StockListItem (Row)                                     │
+│            │                                                               │
+│            ├─ StockDetailsScreen                                          │
+│            │   ├─ Current Price Display                                   │
+│            │   ├─ Throttle Indicator                                      │
+│            │   ├─ Statistics Card (High/Low)                              │
+│            │   └─ PriceGraph (Canvas)                                     │
+│            │                                                               │
+│            └─ TopAppBar with Throttle Toggle                              │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+
+## Memory Footprint & Performance
+
+┌────────────────────────────────────────────────────────────────────────────┐
+│                      PERFORMANCE CHARACTERISTICS                         │
+├────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  WebSocket Connection:                                                    │
+│    • Single shared connection via shareIn()                              │
+│    • WhileSubscribed(5000) keeps alive 5s after last observer          │
+│    • Auto-reconnects on failure                                         │
+│                                                                             │
+│  Data Flow:                                                               │
+│    • Real-time: Every aggTrade event → UI instantly                    │
+│    • Throttled: sample(500) = max 2 updates/sec per ticker             │
+│    • Buffer: Maintains last 50 prices per ticker in memory             │
+│      (5 tickers × 50 × ~40 bytes = ~10KB)                              │
+│                                                                             │
+│  UI Rendering:                                                           │
+│    • Compose recomposes on StateFlow changes (per ticker updates)      │
+│    • PriceGraph: O(n) path construction, n = history length (≤50)     │
+│    • LazyColumn: recycles item composables                             │
+│                                                                             │
+│  Lifecycle:                                                              │
+│    • ViewModel survives config changes                                 │
+│    • WebSocket closed when ViewModel.onCleared()                       │
+│    • Flow collection auto-stops with collectAsStateWithLifecycle()    │
+│                                                                             │
+└────────────────────────────────────────────────────────────────────────────┘

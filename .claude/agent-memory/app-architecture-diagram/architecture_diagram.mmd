@@ -1,0 +1,281 @@
+# TrackCryptoApp - App Flow Architecture Diagram
+
+## Overview
+Real-time cryptocurrency price tracking Android app using Binance WebSocket API with MVVM + Clean Architecture.
+
+## Architecture Layers
+
+```mermaid
+graph TB
+    %% External Systems
+    BINANCE[("Binance API<br/>wss://stream.binance.com:9443/ws<br/>aggTrade events")]
+
+    %% Data Layer
+    subgraph DATA_LAYER [Data Layer]
+        direction LR
+        WS_LISTENER[BinanceWebSocketListener]
+        REPO_IMPL[BinanceStockRepositoryImpl]
+
+        WS_LISTENER -->|parsed messages| REPO_IMPL
+    end
+
+    %% Domain Layer
+    subgraph DOMAIN_LAYER [Domain Layer]
+        direction LR
+        REPO_INTERFACE[StockRepository<br/>interface]
+    end
+
+    REPO_IMPL -.->|implements| REPO_INTERFACE
+
+    %% Dependency Injection
+    subgraph DI_LAYER [Dependency Injection]
+        direction LR
+        APP_MODULE[AppModule]
+        OKHTTP[OkHttpClient<br/>@Singleton]
+        HK[Hilt]
+    end
+
+    APP_MODULE -->|provides| OKHTTP
+    APP_MODULE -->|provides| REPO_IMPL
+    HK -->|injects| APP_MODULE
+
+    %% Presentation Layer
+    subgraph PRESENTATION_LAYER [Presentation Layer]
+        direction TB
+        subgraph UI [UI Components]
+            direction LR
+            MAIN[MainActivity<br/>@AndroidEntryPoint]
+            STOCK_LIST[StockList<br/>Composable]
+            STOCK_DETAILS[StockDetailsScreen<br/>Composable]
+            PRICE_GRAPH[PriceGraph<br/>Canvas Composable]
+            TOP_APP_BAR[TopAppBar<br/>with Throttle Toggle]
+        end
+
+        subgraph VIEWMODEL [ViewModel Layer]
+            STOCK_VM[StockViewModel<br/>@HiltViewModel]
+            UI_STATE[StockUiState<br/>data class]
+        end
+    end
+
+    MAIN -->|hosts| STOCK_LIST
+    MAIN -->|navigation| STOCK_DETAILS
+    STOCK_DETAILS -->|displays| PRICE_GRAPH
+
+    STOCK_VM -->|exposes StateFlow| UI_STATE
+    MAIN -->|collects| UI_STATE
+    STOCK_LIST -->|renders from| UI_STATE
+    STOCK_DETAILS -->|renders from| UI_STATE
+
+    %% Data Flow Arrows
+    BINANCE -->|WebSocket| WS_LISTENER
+    WS_LISTENER -->|onMessage<br/>JSON text| REPO_IMPL
+    REPO_IMPL -->|callbackFlow<br/>StockPrice| REPO_INTERFACE
+    REPO_INTERFACE -->|getStockPriceStream| STOCK_VM
+
+    OKHTTP -->|injected into| REPO_IMPL
+    HK -->|injects| STOCK_VM
+    STOCK_VM -->|calls| REPO_INTERFACE
+
+    %% Lifecycle & State Management
+    STOCK_VM -->|disconnect in<br/>onCleared| REPO_IMPL
+
+    %% Throttling Flow
+    STOCK_VM -->|sample(500)<br/>if throttling| UI_STATE
+
+    %% Data Model
+    subgraph MODEL [Data Model]
+        STOCK_PRICE[StockPrice<br/>data class]
+    end
+
+    WS_LISTENER -->|creates| STOCK_PRICE
+    REPO_IMPL -->|emits| STOCK_PRICE
+    STOCK_VM -->|maintains<br/>Map<ticker, List<Price>>| STOCK_PRICE
+
+    %% Styling
+    classDef external fill:#e1f5fe,stroke:#01579b,stroke-width:2px
+    classDef data fill:#e8f5e8,stroke:#2e7d32,stroke-width:2px
+    classDef domain fill:#fff3e0,stroke:#ef6c00,stroke-width:2px
+    classDef di fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px
+    classDef presentation fill:#fce4ec,stroke:#ad1457,stroke-width:2px
+    classDef model fill:#e0f2f1,stroke:#00695c,stroke-width:2px
+
+    class BINANCE external
+    class DATA_LAYER,WS_LISTENER,REPO_IMPL data
+    class DOMAIN_LAYER,REPO_INTERFACE domain
+    class DI_LAYER,APP_MODULE,OKHTTP,HK di
+    class PRESENTATION_LAYER,UI,VIEWMODEL,MAIN,STOCK_LIST,STOCK_DETAILS,PRICE_GRAPH,TOP_APP_BAR,STOCK_VM,UI_STATE presentation
+    class MODEL,STOCK_PRICE model
+```
+
+## Detailed Component Relationships
+
+### 1. External API Layer
+- **Binance WebSocket API**: `wss://stream.binance.com:9443/ws`
+- **Message Type**: `aggTrade` (aggregated trade events)
+- **Data Format**: JSON with fields `s` (symbol), `p` (price), `T` (timestamp)
+- **Subscription**: Method `SUBSCRIBE` with params like `"btcusdt@aggTrade"`
+
+### 2. Data Layer
+**BinanceWebSocketListener** (`network/`)
+- Extends OkHttp `WebSocketListener`
+- Handles WebSocket lifecycle: `onOpen`, `onMessage`, `onFailure`, `onClosing`
+- On connection open: sends subscription JSON for requested symbols
+- Receives raw JSON strings and forwards via callback `onMessageReceived`
+- Error handling via `onError` callback
+
+**BinanceStockRepositoryImpl** (`data/repository/`)
+- Implements `StockRepository` interface
+- Uses `callbackFlow` to convert WebSocket callbacks to Kotlin Flow
+- Creates OkHttp WebSocket with custom listener
+- Parses JSON messages to `StockPrice` objects
+- Manages WebSocket lifecycle (close on flow completion)
+- Filters only `aggTrade` events
+
+### 3. Domain Layer
+**StockRepository** (`domain/repository/`)
+- Interface defining contract: `getStockPriceStream(symbols: List<String>): Flow<StockPrice>`
+- `disconnect()` method for WebSocket cleanup
+- No Android/OkHttp dependencies (pure domain)
+
+### 4. Dependency Injection
+**AppModule** (`di/`)
+- `@Module` with `@InstallIn(SingletonComponent::class)`
+- `@Provides` `@Singleton` `OkHttpClient`
+- `@Provides` `@Singleton` `StockRepository` returning `BinanceStockRepositoryImpl`
+
+**Hilt Integration**:
+- `TrackCryptoApplication` annotated with `@HiltAndroidApp`
+- `MainActivity` annotated with `@AndroidEntryPoint`
+- `StockViewModel` annotated with `@HiltViewModel` with `@Inject` constructor
+
+### 5. Presentation Layer
+
+**MainActivity** (`MainActivity.kt`)
+- Entry point, `ComponentActivity` with Compose UI
+- Defines tracked symbols: `BTCUSDT`, `ETHUSDT`, `BNBUSDT`, `SOLUSDT`, `ADAUSDT`
+- Sets up `NavHost` with two routes:
+  - `"stock_list"` - main list screen
+  - `"stock_details/{ticker}"` - detail screen with price graph
+- Launches `viewModel.observeStocks(symbols)` via `LaunchedEffect(Unit)`
+- Collects `uiState` with `collectAsStateWithLifecycle()`
+- Top app bar with settings icon to toggle throttling (calls `viewModel.toggleThrottling()`)
+
+**StockViewModel** (`viewmodel/`)
+- `@HiltViewModel` with injected `StockRepository`
+- Maintains `MutableStateFlow<StockUiState>`
+- `observeStocks()`: Creates shared flow from repository, applies conditional throttling:
+  - Uses `shareIn(WhileSubscribed(5000))` to keep single WebSocket connection
+  - `sample(500)` applied when `isThrottlingEnabled` is true
+- State management: builds `Map<String, List<StockPrice>>` with last 50 points per ticker
+- `toggleThrottling()`: Updates flag in state
+- `onCleared()`: calls `repository.disconnect()`
+
+**StockUiState** (data class)
+- `stockPrices: Map<String, List<StockPrice>>` - history per ticker
+- `isLoading: Boolean` - initial loading state
+- `error: String?` - error message if any
+- `isThrottlingEnabled: Boolean` - throttle toggle state
+
+**Composables** (`ui/`)
+- `StockList`: LazyColumn displaying latest price for each ticker
+- `StockListItem`: Row showing ticker and formatted price `$${price}`
+- `StockDetailsScreen`: Shows detail view with:
+  - Current large price display
+  - Update mode indicator (real-time vs sampled)
+  - `PriceGraph` custom Canvas component
+  - Statistics card (high/low)
+- `PriceGraph`: Renders line chart from price history:
+  - Normalizes prices to canvas height
+  - Draws path with `strokeWidth = 2dp`
+
+## Data Flow Sequence
+
+```
+1. WebSocket OPEN
+   └─> BinanceWebSocketListener.onOpen()
+       └─> Send SUBSCRIBE message with symbols
+
+2. Incoming MESSAGE
+   └─> BinanceWebSocketListener.onMessage()
+       └─> onMessageReceived(text) callback
+           └─> BinanceStockRepositoryImpl.parseMessage()
+               └─> Create StockPrice object
+                   └─> trySend to callbackFlow
+
+3. Flow Propagation
+   └─> StockRepository.getStockPriceStream() returns Flow<StockPrice>
+       └─> StockViewModel.observeStocks()
+           └─> repository.getStockPriceStream(symbols)
+               └─> shareIn() creates shared flow
+                   └─> flatMapLatest on throttle flag
+                       ├─> If throttling: sharedPriceFlow.sample(500)
+                       └─> If not: sharedPriceFlow directly
+                           └─> collect { stockPrice }
+                               └─> Update _uiState
+                                   └─> Add to history, keep last 50
+                                       └─> Update StockUiState
+
+4. UI Rendering
+   └─> MainActivity.collectAsStateWithLifecycle(uiState)
+       └─> StockList renders from uiState.stockPrices
+           └─> For each ticker: show StockListItem with last price
+       └─> On click: navigate to "stock_details/{ticker}"
+           └─> StockDetailsScreen collects same uiState
+               └─> PriceGraph renders list<StockPrice> as line chart
+```
+
+## Lifecycle Management
+
+**WebSocket Lifecycle**:
+- Created in `BinanceStockRepositoryImpl.getStockPriceStream()` when flow collector starts
+- Tied to `callbackFlow` lifecycle via `awaitClose { disconnect() }`
+- `disconnect()` called when:
+  - Flow collector cancels (e.g., ViewModel cleared)
+  - Error occurs (flow closes)
+- Only ONE WebSocket connection maintained via `shareIn()`
+
+**ViewModel Lifecycle**:
+- `@HiltViewModel` scoped to Activity
+- `observeStocks()` launches in `viewModelScope`
+- `onCleared()` triggers repository disconnect
+- Survives configuration changes
+
+**Compose Lifecycle**:
+- `collectAsStateWithLifecycle()` automatically stops collection when STOPPED
+- Resumes collection on STARTED
+- `LaunchedEffect(Unit)` runs once on composition
+
+## Throttling Mechanism
+
+```kotlin
+sharedPriceFlow.sample(500)  // Emits at most every 500ms
+```
+
+- Shared flow keeps underlying connection alive
+- Throttling applied downstream without reconnecting
+- Toggle preserved in `StockUiState.isThrottlingEnabled`
+- UI shows indicator when active
+
+## Key Design Decisions
+
+1. **Clean Architecture**: Domain layer independent of Android/OkHttp
+2. **Single WebSocket**: Shared flow prevents multiple connections
+3. **Immutable UI State**: StateFlow with copy-on-write updates
+4. **Compose UI**: Declarative, reactive UI with StateFlow
+5. **Dependency Injection**: Hilt provides singleton dependencies
+6. **Resource Management**: WebSocket properly closed in `awaitClose` and `onCleared`
+7. **Error Handling**: Flow `catch` operator updates error state
+8. **Historical Data**: Maintains last 50 points per ticker (`takeLast(50)`)
+9. **Navigation**: Jetpack Compose Navigation with route parameters
+10. **Custom Graphics**: Canvas-based line chart for price history
+
+## Build & Deployment
+
+- **Language**: Kotlin 2.0.21
+- **Min SDK**: 24, Target SDK**: 35
+- **Compose BOM**: 2024.12.01
+- **Hilt**: 2.54
+- **Coroutines/Flow**: For reactive streams
+- **OkHttp**: WebSocket client
+- **Jetpack Compose Navigation**: For screen transitions
+- **Gradle**: Kotlin DSL (AGP 8.7.3)

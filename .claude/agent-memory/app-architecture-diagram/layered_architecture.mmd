@@ -1,0 +1,64 @@
+flowchart TB
+    %% External
+    BINANCE["Binance API<br/>wss://stream.binance.com:9443/ws"]
+
+    %% Data Layer
+    subgraph DATA [Data Layer]
+        direction LR
+        WS_LISTENER["BinanceWebSocketListener"]
+        WS_IMPL["BinanceStockRepositoryImpl"]
+    end
+
+    BINANCE -->|WebSocket| WS_LISTENER
+    WS_LISTENER -->|text| WS_IMPL
+    WS_IMPL -->|parse| WS_IMPL
+
+    %% Domain Layer
+    subgraph DOMAIN [Domain Layer]
+        REPO["StockRepository"]
+    end
+
+    WS_IMPL -.->|implements| REPO
+
+    %% DI Layer
+    subgraph DI [Dependency Injection]
+        MODULE["AppModule"]
+        CLIENT["OkHttpClient"]
+    end
+
+    MODULE -->|provides| CLIENT
+    MODULE -->|provides| WS_IMPL
+    CLIENT -.->|inject| WS_IMPL
+
+    %% Presentation Layer
+    subgraph PRESENTATION [Presentation Layer]
+        direction LR
+        subgraph VM [ViewModel]
+            VIEW_MODEL["StockViewModel"]
+            UI_STATE["StockUiState"]
+        end
+
+        subgraph COMPOSE [Compose UI]
+            ACTIVITY["MainActivity"]
+            STOCK_LIST["StockList"]
+            STOCK_DETAILS["StockDetailsScreen"]
+            GRAPH["PriceGraph"]
+        end
+    end
+
+    REPO -->|Flow<StockPrice>| VIEW_MODEL
+    VIEW_MODEL -->|StateFlow| UI_STATE
+    ACTIVITY -->|collect| UI_STATE
+    ACTIVITY -->|observeStocks| VIEW_MODEL
+    ACTIVITY -->|toggleThrottling| VIEW_MODEL
+    ACTIVITY -->|navigate| STOCK_LIST
+    STOCK_LIST -->|onClick| STOCK_DETAILS
+    STOCK_DETAILS -->|render| GRAPH
+
+    VIEW_MODEL -.->|onCleared.disconnect| WS_IMPL
+
+    %% Styling comment for manual styling in Mermaid
+    style DATA fill:#e8f5e8,stroke:#2e7d32
+    style DOMAIN fill:#fff3e0,stroke:#ef6c00
+    style DI fill:#f3e5f5,stroke:#7b1fa2
+    style PRESENTATION fill:#fce4ec,stroke:#c2185b

@@ -1,0 +1,34 @@
+flowchart TD
+    BINANCE["Binance WebSocket API"]
+    BINANCE -->|WebSocket| WS_LISTENER["BinanceWebSocketListener"]
+    WS_LISTENER -->|JSON text| PARSE["parseMessage"]
+    PARSE -->|StockPrice| REPO_IMPL["BinanceStockRepositoryImpl"]
+    REPO_IMPL -->|Flow<StockPrice>| REPO["StockRepository Interface"]
+    REPO_IMPL -.->|implements| REPO
+
+    subgraph DI [Dependency Injection]
+        MODULE["AppModule"]
+        OKHTTP["OkHttpClient"]
+    end
+
+    OKHTTP -.->|injected| REPO_IMPL
+    MODULE -->|provides| OKHTTP
+
+    subgraph PRESENTATION [Presentation Layer]
+        MAIN["MainActivity"]
+        STOCK_VM["StockViewModel"]
+        STATE["StockUiState"]
+        LIST["StockList"]
+        DETAIL["StockDetailsScreen"]
+        GRAPH["PriceGraph"]
+    end
+
+    REPO -->|stream| STOCK_VM
+    STOCK_VM -->|StateFlow| STATE
+    MAIN -->|collect| STATE
+    MAIN -->|start observation| STOCK_VM
+    MAIN -->|toggle throttle| STOCK_VM
+    MAIN -->|navigate| LIST
+    LIST -->|click| DETAIL
+    DETAIL -->|display| GRAPH
+    STOCK_VM -->|onCleared:disconnect| REPO_IMPL
