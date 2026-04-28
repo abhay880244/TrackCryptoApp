@@ -2,6 +2,19 @@
 
 Tracking the crypto market - all in one
 
+
+<img width="400" height="900" alt="image" src="https://github.com/user-attachments/assets/c192c7a8-7a17-4a7d-b9be-5db71786df51" />
+
+# 
+
+<img width="400" height="900" alt="image" src="https://github.com/user-attachments/assets/d0d504e4-d39f-4a1f-9c77-1d7b75e5cb01" />
+
+# 
+
+https://github.com/user-attachments/assets/b59f5a4d-2187-465a-8bc6-530d8bd49a6b
+
+
+
 ### Features
 - Real-time cryptocurrency price tracking via Binance WebSocket
 - Live price updates for BTC, ETH, BNB, SOL, ADA
