@@ -14,7 +14,7 @@ Tracking the crypto market - all in one
 - Material Design 3 UI with dark/light theme support
 
 
-Solarized dark             |  Solarized Ocean
+List                       |  Detail
 :-------------------------:|:-------------------------:
 ![](https://github.com/user-attachments/assets/c192c7a8-7a17-4a7d-b9be-5db71786df51)  |  ![](https://github.com/user-attachments/assets/d0d504e4-d39f-4a1f-9c77-1d7b75e5cb01)
 
