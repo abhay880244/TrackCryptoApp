@@ -13,6 +13,11 @@ Tracking the crypto market - all in one
 - Session statistics (high/low prices)
 - Material Design 3 UI with dark/light theme support
 
+
+List                       |  Detail
+:-------------------------:|:-------------------------:
+![](https://github.com/user-attachments/assets/c192c7a8-7a17-4a7d-b9be-5db71786df51)  |  ![](https://github.com/user-attachments/assets/d0d504e4-d39f-4a1f-9c77-1d7b75e5cb01)
+
 ### Tech Stack
 - **Language:** Kotlin
 - **UI:** Jetpack Compose + Material3
@@ -132,8 +137,5 @@ All messages are cached in Room for offline viewing and graph rendering.
 - **Network-aware:** Automatically fetches live data when online, shows cached data when offline
 - **All dependencies** managed via version catalog (`gradle/libs.versions.toml`)
 
-### License
-[Add license information here]
+https://github.com/user-attachments/assets/b59f5a4d-2187-465a-8bc6-530d8bd49a6b
 
-### Contributing
-[Add contribution guidelines here]
