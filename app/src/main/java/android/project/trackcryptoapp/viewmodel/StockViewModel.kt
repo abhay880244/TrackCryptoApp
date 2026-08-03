@@ -1,6 +1,8 @@
 package android.project.trackcryptoapp.viewmodel
 
-import android.project.trackcryptoapp.domain.repository.StockRepository
+import android.project.trackcryptoapp.domain.usecase.DisconnectUseCase
+import android.project.trackcryptoapp.domain.usecase.GetStockPricesUseCase
+import android.project.trackcryptoapp.domain.usecase.SyncStockPricesUseCase
 import android.project.trackcryptoapp.model.StockPrice
 import android.project.trackcryptoapp.network.NetworkMonitor
 import androidx.lifecycle.SavedStateHandle
@@ -23,7 +25,9 @@ data class StockUiState(
 
 @HiltViewModel
 class StockViewModel @Inject constructor(
-    private val repository: StockRepository,
+    private val getStockPricesUseCase: GetStockPricesUseCase,
+    private val syncStockPricesUseCase: SyncStockPricesUseCase,
+    private val disconnectUseCase: DisconnectUseCase,
     private val networkMonitor: NetworkMonitor,
     private val savedStateHandle: SavedStateHandle
 ) : ViewModel() {
@@ -50,7 +54,7 @@ class StockViewModel @Inject constructor(
             networkMonitor.isOnline
                 .flatMapLatest { isOnline ->
                     if (isOnline) {
-                        repository.startRealtimeSync(symbols)
+                        syncStockPricesUseCase(symbols)
                             .retry(3) { e ->
                                 (e is Exception).also { if (it) delay(2000) }
                             }
@@ -72,7 +76,7 @@ class StockViewModel @Inject constructor(
                 .map { it.isThrottlingEnabled }
                 .distinctUntilChanged()
                 .flatMapLatest { enabled ->
-                    val dataFlow = repository.getStockPrices(symbols)
+                    val dataFlow = getStockPricesUseCase(symbols)
                     if (enabled) {
                         dataFlow.sample(500)
                     } else {
@@ -91,6 +95,6 @@ class StockViewModel @Inject constructor(
 
     override fun onCleared() {
         super.onCleared()
-        repository.disconnect()
+        disconnectUseCase()
     }
 }
